@@ -42,17 +42,13 @@ Inside the Compose network, use `kafka-1:19092`, `kafka-2:19092`, or `kafka-3:19
 
 ### Stop
 
-Stop the containers and keep their data:
+Stop the containers:
 
 ```bash
 docker compose down
 ```
 
-Stop the containers and remove the test data:
-
-```bash
-docker compose down --volumes --remove-orphans
-```
+Broker data uses a temporary filesystem. It remains available when a container restarts, but it is removed when the container is removed. Run `docker compose down` and start the cluster again to get clean broker state.
 
 ## Lab boundaries
 
@@ -60,4 +56,4 @@ docker compose down --volumes --remove-orphans
 - The Lab must use only an approved, pinned verdict contract when a contract is introduced.
 - Do not add product classes or product Maven dependencies to this repository.
 - The cluster uses plaintext communication. Do not use it for production data or expose its ports to an untrusted network.
-- The fixed cluster ID and named volumes are for this disposable test cluster. Remove the volumes when you need a clean cluster.
+- The fixed cluster ID and temporary broker data directories are for this disposable test cluster. Container removal deletes broker data.
