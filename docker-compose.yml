@@ -24,8 +24,8 @@ services:
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
       KAFKA_HEAP_OPTS: -Xms256m -Xmx256m
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
-    volumes:
-      - kafka-1-data:/tmp/kraft-combined-logs
+    tmpfs:
+      - /tmp/kraft-combined-logs:rw,size=512m
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 10s
@@ -58,8 +58,8 @@ services:
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
       KAFKA_HEAP_OPTS: -Xms256m -Xmx256m
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
-    volumes:
-      - kafka-2-data:/tmp/kraft-combined-logs
+    tmpfs:
+      - /tmp/kraft-combined-logs:rw,size=512m
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 10s
@@ -92,8 +92,8 @@ services:
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
       KAFKA_HEAP_OPTS: -Xms256m -Xmx256m
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
-    volumes:
-      - kafka-3-data:/tmp/kraft-combined-logs
+    tmpfs:
+      - /tmp/kraft-combined-logs:rw,size=512m
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 10s
@@ -101,7 +101,3 @@ services:
       retries: 12
       start_period: 30s
 
-volumes:
-  kafka-1-data:
-  kafka-2-data:
-  kafka-3-data:
