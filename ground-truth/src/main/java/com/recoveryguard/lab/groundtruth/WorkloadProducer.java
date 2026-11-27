@@ -7,7 +7,6 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.serialization.StringSerializer;
 
 import java.io.IOException;
-import java.time.Duration;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
@@ -17,7 +16,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class WorkloadProducer {
-    private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(10);
     private static final long CALLBACK_TIMEOUT_SECONDS = 300;
 
     int produce(RunStore.Run run, int count, int payloadBytes, long intervalMs) throws Exception {
@@ -26,6 +24,9 @@ final class WorkloadProducer {
         }
         if (payloadBytes < 1 || payloadBytes > 1_000_000) {
             throw new IllegalArgumentException("payloadBytes must be between 1 and 1000000");
+        }
+        if (intervalMs < 0 || intervalMs > 60_000) {
+            throw new IllegalArgumentException("intervalMs must be between 0 and 60000");
         }
 
         Properties properties = new Properties();
@@ -99,6 +100,14 @@ final class WorkloadProducer {
                         ));
                     } finally {
                         callbacks.countDown();
+                    }
+                }
+                if (intervalMs > 0 && index + 1 < count) {
+                    try {
+                        Thread.sleep(intervalMs);
+                    } catch (InterruptedException interruptedException) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Workload production was interrupted", interruptedException);
                     }
                 }
             }
