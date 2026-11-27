@@ -252,6 +252,11 @@ For each experiment, retain:
 
 Do not compare runs when their relevant configuration differs without recording that difference.
 
-## 12. Scenario catalogue
+## 12. Lab documentation
 
-See [Stage 3.6 Scenario Specification](docs/stage-3.6-scenario-specification.md) for the scenario catalogue, evidence gaps, execution order, and acceptance criteria.
+- [Lab architecture](docs/architecture.md)
+- [Lab operations guide](docs/operations.md)
+- [Experiment record template](docs/experiment-record-template.md)
+- [Stage 3.6 scenario specification](docs/stage-3.6-scenario-specification.md)
+
+The scenario specification records the experiment catalogue, evidence gaps, execution order, acceptance criteria, and validated RG-00 baseline.
