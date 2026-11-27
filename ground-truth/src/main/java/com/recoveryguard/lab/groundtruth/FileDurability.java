@@ -23,7 +23,7 @@ final class FileDurability {
 
         Files.createDirectories(absolute);
 
-        // Persist each new directory entry in its parent, from the deepest path upward.
+        // Persist each new directory entry in its parent, from the highest new directory downward.
         Collections.reverse(missing);
         for (Path createdDirectory : missing) {
             Path parent = createdDirectory.getParent();
