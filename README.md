@@ -77,7 +77,7 @@ Run from the repository root:
 
 ```bash
 cd ground-truth
-mvn --batch-mode clean verify package
+mvn --batch-mode clean verify
 ```
 
 The executable JAR is:
@@ -125,9 +125,25 @@ This creates a manifest and an append-only `events.jsonl` file under `runs/rg-00
 java -jar target/ground-truth-0.1.0-SNAPSHOT.jar produce \
   --output-dir ../runs \
   --run-id rg-001 \
-  --count 10000 \
+  --count 100000 \
   --payload-bytes 512 \
-  --interval-ms 1
+  --interval-ms 1 \
+  > /tmp/rg-001-producer.log 2>&1 &
+producer_pid=$!
+```
+
+Keep this producer process running while you inject the failure. Record the failure before you stop the broker. After the broker has restarted, wait for the producer to finish:
+
+```bash
+# Run the failure-start command below, then inject the failure.
+# Restore the broker and run failure-end.
+wait "$producer_pid"
+```
+
+Read the producer log if the command exits with an error:
+
+```bash
+cat /tmp/rg-001-producer.log
 ```
 
 Producer settings are fixed for the confirmed-write workload:
