@@ -208,9 +208,10 @@ final class RecordVerifier {
             status = "INCOMPLETE";
         } else if (missingCount > 0 || payloadMismatchCount > 0
                 || locationMismatchCount > 0 || duplicateRecordIdCount > 0
-                || contradictoryOutcomes > 0) {
+                || contradictoryOutcomes > 0 || untrackedRecordCount > 0) {
             status = "INTEGRITY_FAILURE";
-        } else if (unknownMissingCount > 0 || unresolvedIntentMissingCount > 0) {
+        } else if (unknownFoundCount > 0 || unknownMissingCount > 0
+                || unresolvedIntentFoundCount > 0 || unresolvedIntentMissingCount > 0) {
             status = "INCONCLUSIVE";
         } else if (confirmedCount == 0) {
             status = "INCOMPLETE";
