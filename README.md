@@ -1,168 +1,121 @@
 # RecoveryGuard Lab
 
-RecoveryGuard Lab is an independent test environment for Kafka recovery experiments. It does not contain product code. The product repository must not import or depend on this repository.
+**Independent Kafka recovery test and experiment environment**
 
-## Local Kafka cluster
+RecoveryGuard Lab is the controlled engineering environment used to test Kafka recovery behaviour and to validate RecoveryGuard evidence against an independent source of truth.
 
-The Compose file starts three Apache Kafka 4.4.0 nodes. Each node has the broker and controller roles. All three nodes are members of the KRaft controller quorum.
+The Lab contains the Kafka cluster definition, test workloads, failure-injection procedures, ground-truth recorder, and record verifier. It is not part of the RecoveryGuard product runtime.
 
-The cluster uses plaintext listeners and test-only settings. It is for local development and controlled experiments. It is not a production deployment template.
+> **Environment status:** The repository contains a three-broker Apache Kafka 4.4.0 KRaft test cluster and an independent ground-truth recorder. RG-00, an active partition-leader failure scenario, has completed a valid 10,000-record verification run. Other scenarios remain research and implementation work unless a run record states otherwise.
 
-### Start
+## 1. Lab responsibilities
 
-Run these commands from the repository root:
+- Provide a repeatable Kafka test topology.
+- Apply controlled failures through explicit operator scripts.
+- Record experiment configuration and operator failure events.
+- Generate unique test records with an independent acknowledgement ledger.
+- Verify confirmed writes after recovery.
+- Preserve experiment reports and logs outside the product repository.
+- Provide independent results for product integration tests.
 
-```bash
-docker compose up -d --wait --wait-timeout 240
-```
+## 2. Repository structure
 
-### Verify
+| Path | Responsibility |
+|---|---|
+| `docker-compose.yml` | Three-broker KRaft cluster |
+| `ground-truth/` | Producer, durable event ledger, failure recorder, and record verifier |
+| `scripts/smoke-test.sh` | Basic cluster and replication smoke test |
+| `scripts/rg-00-leader-failure.sh` | RG-00 active leader failure injection |
+| `docs/stage-3.6-scenario-specification.md` | Scenario catalogue, evidence requirements, and experiment plan |
+| `.github/workflows/` | Cluster smoke tests and ground-truth CI |
 
-Run the smoke test from WSL or a Bash shell:
+Run outputs belong in local `runs/` and `reports/` directories. Do not commit broker data, generated records, credentials, or run output.
 
-```bash
-bash scripts/smoke-test.sh
-```
+## 3. Test cluster
 
-The test creates a topic with three partitions and replication factor three. It checks that each partition has three replicas and three in-sync replicas. It then writes one record with `acks=all` and reads it back.
+The Compose file starts three Apache Kafka 4.4.0 nodes. Each node has broker and controller roles. The three nodes form a KRaft controller quorum.
 
-GitHub Actions runs the same smoke test for pull requests and pushes to `main`.
+| Setting | Value |
+|---|---|
+| Kafka image | `apache/kafka:4.4.0` |
+| Nodes | 3 |
+| Process roles | broker, controller |
+| Controller quorum | 3 voters |
+| Default replication factor | 3 |
+| Minimum in-sync replicas | 2 |
+| Listener security | PLAINTEXT for local testing |
+| Broker log storage | Temporary filesystem |
 
-### Connect from the host
+This topology is for local development and controlled experiments. It is not a production deployment template. Plaintext listeners must not be exposed to untrusted networks or used with production data.
 
-Use one or more of these bootstrap endpoints:
+### Host endpoints
 
 | Node | Host endpoint |
-| --- | --- |
+|---|---|
 | kafka-1 | `localhost:29092` |
 | kafka-2 | `localhost:39092` |
 | kafka-3 | `localhost:49092` |
 
-Inside the Compose network, use `kafka-1:19092`, `kafka-2:19092`, or `kafka-3:19092`.
+Inside the Compose network, use `kafka-1:19092`, `kafka-2:19092`, and `kafka-3:19092`.
 
-### Stop
+### Start and check
 
-Stop the containers:
+Run from the repository root:
+
+```bash
+docker compose up -d --wait --wait-timeout 240
+bash scripts/smoke-test.sh
+```
+
+The smoke test checks three replicas and three ISR members for each test partition. It then produces and reads a test record.
+
+### Stop and reset
 
 ```bash
 docker compose down
 ```
 
-Broker data uses a temporary filesystem. It remains available when a container restarts, but it is removed when the container is removed. Run `docker compose down` and start the cluster again to get clean broker state.
+Broker data uses a temporary filesystem. It survives a container restart but is removed when the container is removed. A new cluster after container removal starts with clean broker data.
 
-## Lab boundaries
+## 4. Ground-truth recorder
 
-- Lab code and ground truth must stay independent of RecoveryGuard product implementation.
-- The Lab must use only an approved, pinned verdict contract when a contract is introduced.
-- Do not add product classes or product Maven dependencies to this repository.
-- The cluster uses plaintext communication. Do not use it for production data or expose its ports to an untrusted network.
-- The fixed cluster ID and temporary broker data directories are for this disposable test cluster. Container removal deletes broker data.
+The `ground-truth/` Maven module is independent of product implementation. It provides:
 
-## Independent ground-truth recorder
+- a Kafka producer for controlled workloads;
+- unique record identities and payload hashes;
+- a durable send-intent and acknowledgement ledger;
+- operator-recorded failure events; and
+- a record verifier that compares Kafka records with the external ledger.
 
-The `ground-truth/` Maven module provides an independent producer, acknowledgement ledger, failure-event recorder, and Kafka record verifier. It is Lab code only. It must not import RecoveryGuard product classes or use a product verdict as ground truth.
+The recorder must not import RecoveryGuard product classes or use a product verdict as its ground-truth result.
 
 ### Requirements
 
-- Java 17
-- Maven 3.9 or newer
-- The Lab Kafka cluster must be running
-- A separate, non-compacted topic for each run
-- Enough topic retention to complete the test and verification
-- A filesystem that supports directory synchronization for durable run creation
+- JDK 17
+- Maven 3.9 or later
+- Docker Engine with Docker Compose
+- Running Lab Kafka cluster
+- A new, non-compacted topic for each experiment run
+- Retention long enough to complete the experiment and verification
+- Bash, `jq`, and GNU `timeout` for the failure-injection script
 
-### Build and test
+### Build
 
 Run from the repository root:
 
 ```bash
-cd ground-truth
-mvn --batch-mode clean verify
+mvn --batch-mode --no-transfer-progress -f ground-truth/pom.xml clean verify
 ```
 
-The executable JAR is:
+Executable JAR:
 
 ```text
 ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar
 ```
 
-### Create a test topic
+### Create a topic
 
-Run from the repository root. Use a new topic for each experiment run:
-
-```bash
-docker compose exec -T kafka-1 /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server kafka-1:19092 \
-  --create \
-  --topic rg-run-001 \
-  --partitions 3 \
-  --replication-factor 3 \
-  --config min.insync.replicas=2 \
-  --config cleanup.policy=delete \
-  --config retention.ms=86400000
-```
-
-The tool does not create or alter Kafka topics. Topic setup is a separate Lab operation.
-
-### Create a run
-
-Run from the `ground-truth/` directory:
-
-```bash
-java -jar target/ground-truth-0.1.0-SNAPSHOT.jar create \
-  --output-dir ../runs \
-  --run-id rg-001 \
-  --topic rg-run-001 \
-  --bootstrap-servers localhost:29092 \
-  --description "RG-00 leader failure"
-```
-
-This creates a manifest and an append-only `events.jsonl` file under `runs/rg-001/`. The ledger is stored on the host, outside Kafka and outside broker containers.
-
-### Produce records
-
-```bash
-java -jar target/ground-truth-0.1.0-SNAPSHOT.jar produce \
-  --output-dir ../runs \
-  --run-id rg-001 \
-  --count 100000 \
-  --payload-bytes 512 \
-  --interval-ms 1 \
-  > /tmp/rg-001-producer.log 2>&1 &
-producer_pid=$!
-```
-
-Keep this producer process running while you inject the failure. Record the failure before you stop the broker. After the broker has restarted, wait for the producer to finish:
-
-```bash
-# Run the failure-start command below, then inject the failure.
-# Restore the broker and run failure-end.
-wait "$producer_pid"
-```
-
-Read the producer log if the command exits with an error:
-
-```bash
-cat /tmp/rg-001-producer.log
-```
-
-Producer settings are fixed for the confirmed-write workload:
-
-- `acks=all`
-- `enable.idempotence=true`
-- `retries=Integer.MAX_VALUE`
-
-Each record has a unique key and a SHA-256 payload hash. The tool records a durable send-intent batch before it sends that batch. A successful producer callback is written to the durable ledger as `ACK_CONFIRMED`, with topic, partition, offset, timestamp, and payload hash. Producer errors are recorded as `OUTCOME_UNKNOWN`; the tool does not guess that Kafka rejected the write.
-
-`--interval-ms 0` sends at the maximum client rate. A positive value inserts a delay between records. The observed rate depends on the host, broker, payload, and acknowledgement latency.
-
-### RG-00: active leader failure
-
-This experiment uses one partition, three replicas, and `min.insync.replicas=2`. It discovers the current leader before it sends a SIGKILL to that broker. It then waits for a replacement leader, restarts the failed broker, and waits for ISR=3.
-
-Run from the repository root in WSL or Bash. Use a new topic and run ID for each experiment.
-
-Create the topic:
+Use a new topic for each run. The recorder does not create or alter Kafka topics.
 
 ```bash
 docker compose exec -T kafka-1 /opt/kafka/bin/kafka-topics.sh \
@@ -176,13 +129,7 @@ docker compose exec -T kafka-1 /opt/kafka/bin/kafka-topics.sh \
   --config retention.ms=86400000
 ```
 
-Build the recorder:
-
-```bash
-mvn --batch-mode -f ground-truth/pom.xml clean verify
-```
-
-Create the run:
+### Create a run
 
 ```bash
 java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar create \
@@ -193,7 +140,38 @@ java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar create \
   --description "RG-00 active leader failure"
 ```
 
-Start the producer:
+This creates a run manifest and append-only `events.jsonl` ledger under `runs/<run-id>/`. The ledger is stored outside Kafka and outside the broker containers.
+
+## 5. Workload and acknowledgement semantics
+
+Example producer command:
+
+```bash
+java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar produce \
+  --output-dir runs \
+  --run-id rg-00-run-001 \
+  --count 10000 \
+  --payload-bytes 512 \
+  --interval-ms 1
+```
+
+The confirmed-write workload uses:
+
+- `acks=all`;
+- `enable.idempotence=true`; and
+- `retries=Integer.MAX_VALUE`.
+
+Each record has a unique key and a SHA-256 payload hash. The recorder writes a durable send-intent batch before sending it. A successful producer callback is recorded as `ACK_CONFIRMED`, with topic, partition, offset, timestamp, and payload hash. Producer errors are recorded as `OUTCOME_UNKNOWN`. An unknown outcome must not be treated as a confirmed rejection or a confirmed write.
+
+The actual throughput depends on host resources, broker load, payload size, and acknowledgement latency.
+
+## 6. RG-00: active partition-leader failure
+
+RG-00 uses one partition, replication factor 3, and `min.insync.replicas=2`. The injector discovers the current partition leader, records the failure start, kills that broker container, waits for a replacement leader, restarts the failed broker, and waits for ISR to return to three replicas.
+
+Use a new topic and run ID for each experiment.
+
+Start the producer in the background, then run the failure injector:
 
 ```bash
 java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar produce \
@@ -202,22 +180,18 @@ java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar produce \
   --count 10000 \
   --payload-bytes 512 \
   --interval-ms 1 \
-  > /tmp/rg-00-run-001-producer.log 2>&1 &
+  > rg-00-run-001-producer.log 2>&1 &
 producer_pid=$!
-```
 
-While the producer runs, inject the failure:
-
-```bash
 bash scripts/rg-00-leader-failure.sh rg-00-run-001 rg-00-run-001
+wait "$producer_pid"
 ```
 
-The script stops only the active partition leader. It restarts that broker if the script exits before recovery. Do not stop the other brokers during this experiment.
+The injector has safety checks for the run manifest, topic, partition count, replica set, ISR, and broker mapping. It attempts to restart the failed broker if the script exits while the broker is stopped. Do not stop the other brokers during RG-00.
 
-Wait for the producer and verify the records:
+Verify after the producer has finished:
 
 ```bash
-wait "$producer_pid"
 java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar verify \
   --output-dir runs \
   --run-id rg-00-run-001 \
@@ -225,91 +199,59 @@ java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar verify \
   --timeout-ms 60000
 ```
 
-Keep the producer log and verification report with the run evidence. A non-zero producer exit or a verifier result other than `PASS` needs review. Do not label an unknown producer outcome as acknowledged-write loss.
+Keep the manifest, ledger, producer log, verifier report, Kafka configuration, and relevant container logs with the experiment record.
 
-### Record failure events
+## 7. Record verifier results
 
-Record the start before injecting a failure:
-
-```bash
-java -jar target/ground-truth-0.1.0-SNAPSHOT.jar failure-start \
-  --output-dir ../runs \
-  --run-id rg-001 \
-  --failure-id broker-2-stop \
-  --target kafka-2 \
-  --action container-stop \
-  --details "Stop broker 2 during producer workload"
-```
-
-Then inject the failure. For example:
-
-```bash
-docker compose stop kafka-2
-```
-
-After the broker returns:
-
-```bash
-docker compose start kafka-2
-```
-
-Record the observed end:
-
-```bash
-java -jar target/ground-truth-0.1.0-SNAPSHOT.jar failure-end \
-  --output-dir ../runs \
-  --run-id rg-001 \
-  --failure-id broker-2-stop \
-  --result completed \
-  --details "Broker 2 started; replica catch-up still requires verification"
-```
-
-These are operator event timestamps. They are not exact broker process timestamps. Kafka and container logs must be collected separately when precise failure times are needed.
-
-### Verify after recovery
-
-Run only after the producer has finished and the cluster has reached the state being tested:
-
-```bash
-java -jar target/ground-truth-0.1.0-SNAPSHOT.jar verify \
-  --output-dir ../runs \
-  --run-id rg-001 \
-  --report reports/rg-001-verification.json \
-  --timeout-ms 60000
-```
-
-The verifier:
-
-- Reads all available topic partitions from the beginning.
-- Uses manual partition assignment.
-- Does not join a consumer group.
-- Does not commit offsets.
-- Compares confirmed writes by record ID, payload hash, partition, and offset.
-- Checks unknown outcomes separately.
-- Reports duplicate record IDs and records that are not in the ledger.
-- Writes a JSON report outside the run directory.
-
-Possible statuses:
+The verifier reads the topic from the beginning using manual partition assignment. It does not join a consumer group or commit offsets. It compares confirmed writes by record ID, payload hash, partition, and offset. It also reports unknown outcomes, duplicates, and records that are not in the ledger.
 
 | Status | Meaning |
 |---|---|
-| `PASS` | Every confirmed write was found once at its recorded location, with its expected payload hash. |
-| `INTEGRITY_FAILURE` | A confirmed write is missing, changed, duplicated, or has an inconsistent location or producer outcome. |
-| `INCONCLUSIVE` | One or more records have an unknown or unresolved producer outcome. The report shows whether each record was found. |
-| `INCOMPLETE` | The topic scan did not reach all captured end offsets, or the run has no confirmed writes. |
+| `PASS` | Every confirmed write was found once at its recorded location with its expected payload hash |
+| `INTEGRITY_FAILURE` | A confirmed write is missing, changed, duplicated, or has an inconsistent location or producer outcome |
+| `INCONCLUSIVE` | At least one producer outcome remains unknown or unresolved |
+| `INCOMPLETE` | The scan did not reach all captured end offsets, or the run has no confirmed writes |
 
-A verifier report with `PASS` proves record preservation for this topic scan. It does not prove KRaft quorum health, replica placement, reassignment completion, or application-level correctness. Stage 4 will decide how those checks can use approved evidence.
+A `PASS` applies to the topic scan and run configuration. It does not prove KRaft quorum health, replica placement, reassignment completion, or application-level correctness.
 
-### Inspect the ledger
+## 8. Ledger integrity
 
-```bash
-java -jar target/ground-truth-0.1.0-SNAPSHOT.jar show-ledger \
-  --output-dir ../runs \
-  --run-id rg-001
-```
+The event ledger uses a SHA-256 hash chain. It detects edits to existing events, reordering, and removal of an event from the middle of the chain.
 
-The ledger uses a SHA-256 hash chain. It detects edits to existing events, reordering, and removal of an event from the middle of the chain. It cannot detect removal of a complete final suffix unless the expected terminal hash or event count is stored independently. It also cannot stop an actor who can rewrite the complete file and recompute the chain. An incomplete final line is rejected. The recorder synchronizes each evidence file and its containing directory before it reports successful creation. The filesystem must support directory synchronization; the recorder reports an error when the filesystem does not support it.
+A hash chain alone cannot detect removal of a complete final suffix unless the expected terminal hash or event count is stored independently. It cannot prevent an actor who can rewrite the complete ledger and recompute the chain. An incomplete final line is rejected.
 
-### Run records and reports
+The recorder synchronizes evidence files and their containing directory before it reports successful creation. The filesystem must support directory synchronization.
 
-Keep run data outside Git. The root `.gitignore` excludes `runs/`, `reports/`, and Maven build output. Do not upload test payloads or broker data to the product repository.
+## 9. Lab and product boundary
+
+- Lab owns failure injection and independent ground truth.
+- Product owns Observer behaviour, evidence contracts, and verdict implementation.
+- Lab must not import product implementation classes.
+- Product must not import or depend on Lab code, images, packages, or build outputs.
+- Any shared contract must be versioned, approved, and pinned.
+- Lab results must be generated independently of product verdicts.
+
+## 10. CI
+
+The Lab workflows build and test the ground-truth module and run the three-broker Kafka smoke and record-verification tests. CI uses isolated topics and run identifiers. CI results validate only the test paths that the workflow executes.
+
+## 11. Experiment records
+
+For each experiment, retain:
+
+- unique run ID and scenario ID;
+- Kafka image and broker version;
+- Compose configuration and cluster topology;
+- topic configuration and partition layout;
+- producer settings and workload size;
+- failure target, action, and operator timestamps;
+- product Observer version and configuration, when used;
+- ground-truth ledger and verifier report;
+- Kafka and container logs;
+- run status, deviations, and interpretation.
+
+Do not compare runs when their relevant configuration differs without recording that difference.
+
+## 12. Scenario catalogue
+
+See [Stage 3.6 Scenario Specification](docs/stage-3.6-scenario-specification.md) for the scenario catalogue, evidence gaps, execution order, and acceptance criteria.
