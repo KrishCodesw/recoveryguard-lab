@@ -237,7 +237,7 @@ java -jar target/ground-truth-0.1.0-SNAPSHOT.jar show-ledger \
   --run-id rg-001
 ```
 
-The ledger uses a SHA-256 hash chain. It detects accidental edits, removed events, reordering, and incomplete final writes. It is not tamper-proof against an actor who can rewrite the complete file and recompute the chain.
+The ledger uses a SHA-256 hash chain. It detects edits to existing events, reordering, and removal of an event from the middle of the chain. It cannot detect removal of a complete final suffix unless the expected terminal hash or event count is stored independently. It also cannot stop an actor who can rewrite the complete file and recompute the chain. An incomplete final line is rejected.
 
 ### Run records and reports
 
