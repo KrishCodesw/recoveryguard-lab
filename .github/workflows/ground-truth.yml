@@ -39,4 +39,4 @@ jobs:
           cache-dependency-path: ground-truth/pom.xml
 
       - name: Build and test
-        run: mvn --batch-mode --no-transfer-progress -f ground-truth/pom.xml clean verify package
+        run: mvn --batch-mode --no-transfer-progress -f ground-truth/pom.xml clean verify
