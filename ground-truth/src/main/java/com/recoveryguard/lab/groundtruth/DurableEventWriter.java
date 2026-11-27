@@ -63,6 +63,13 @@ final class DurableEventWriter implements AutoCloseable {
                 List<EventLedger.Entry> batch = new ArrayList<>(MAX_BATCH_SIZE);
                 batch.add(first);
 
+                EventLedger.Entry next = queue.poll(10, TimeUnit.MILLISECONDS);
+                if (next == POISON) {
+                    stop = true;
+                } else if (next != null) {
+                    batch.add(next);
+                }
+
                 List<EventLedger.Entry> drained = new ArrayList<>(MAX_BATCH_SIZE);
                 queue.drainTo(drained, MAX_BATCH_SIZE - 1);
                 for (EventLedger.Entry entry : drained) {
