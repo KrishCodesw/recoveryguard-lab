@@ -10,6 +10,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 
 import java.io.IOException;
@@ -300,11 +301,21 @@ final class RecordVerifier {
             long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
             boolean complete = false;
             while (System.nanoTime() < deadline) {
-                ConsumerRecords<String, String> records = consumer.poll(POLL_INTERVAL);
+                long remainingNanos = deadline - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    break;
+                }
+                Duration pollTimeout = Duration.ofNanos(Math.min(
+                        POLL_INTERVAL.toNanos(), remainingNanos));
+                ConsumerRecords<String, String> records = consumer.poll(pollTimeout);
+
                 for (ConsumerRecord<String, String> record : records) {
-                    if (record.key() == null) {
+                    TopicPartition partition = new TopicPartition(record.topic(), record.partition());
+                    long capturedEndOffset = endOffsets.getOrDefault(partition, 0L);
+                    if (record.offset() >= capturedEndOffset || record.key() == null) {
                         continue;
                     }
+
                     String payloadHash = record.value() == null
                             ? Hashing.sha256(new byte[0])
                             : Hashing.sha256(record.value().getBytes(StandardCharsets.UTF_8));
@@ -315,7 +326,18 @@ final class RecordVerifier {
 
                 complete = true;
                 for (TopicPartition partition : partitions) {
-                    if (consumer.position(partition) < endOffsets.getOrDefault(partition, 0L)) {
+                    remainingNanos = deadline - System.nanoTime();
+                    if (remainingNanos <= 0) {
+                        complete = false;
+                        break;
+                    }
+                    long position;
+                    try {
+                        position = consumer.position(partition, Duration.ofNanos(remainingNanos));
+                    } catch (TimeoutException timeoutException) {
+                        return null;
+                    }
+                    if (position < endOffsets.getOrDefault(partition, 0L)) {
                         complete = false;
                         break;
                     }
