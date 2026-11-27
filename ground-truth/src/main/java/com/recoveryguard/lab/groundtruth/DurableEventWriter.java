@@ -71,7 +71,7 @@ final class DurableEventWriter implements AutoCloseable {
                 }
 
                 List<EventLedger.Entry> drained = new ArrayList<>(MAX_BATCH_SIZE);
-                queue.drainTo(drained, MAX_BATCH_SIZE - 1);
+                queue.drainTo(drained, MAX_BATCH_SIZE - batch.size());
                 for (EventLedger.Entry entry : drained) {
                     if (entry == POISON) {
                         stop = true;
@@ -103,8 +103,10 @@ final class DurableEventWriter implements AutoCloseable {
         }
         closed = true;
         try {
-            if (worker.isAlive()) {
-                queue.put(POISON);
+            while (worker.isAlive() && !queue.offer(POISON, 100, TimeUnit.MILLISECONDS)) {
+                if (failure.get() != null && !worker.isAlive()) {
+                    break;
+                }
             }
             worker.join();
         } catch (InterruptedException interruptedException) {
