@@ -156,6 +156,77 @@ Each record has a unique key and a SHA-256 payload hash. The tool records a dura
 
 `--interval-ms 0` sends at the maximum client rate. A positive value inserts a delay between records. The observed rate depends on the host, broker, payload, and acknowledgement latency.
 
+### RG-00: active leader failure
+
+This experiment uses one partition, three replicas, and `min.insync.replicas=2`. It discovers the current leader before it sends a SIGKILL to that broker. It then waits for a replacement leader, restarts the failed broker, and waits for ISR=3.
+
+Run from the repository root in WSL or Bash. Use a new topic and run ID for each experiment.
+
+Create the topic:
+
+```bash
+docker compose exec -T kafka-1 /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka-1:19092 \
+  --create \
+  --topic rg-00-run-001 \
+  --partitions 1 \
+  --replication-factor 3 \
+  --config min.insync.replicas=2 \
+  --config cleanup.policy=delete \
+  --config retention.ms=86400000
+```
+
+Build the recorder:
+
+```bash
+mvn --batch-mode -f ground-truth/pom.xml clean verify
+```
+
+Create the run:
+
+```bash
+java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar create \
+  --output-dir runs \
+  --run-id rg-00-run-001 \
+  --topic rg-00-run-001 \
+  --bootstrap-servers localhost:29092 \
+  --description "RG-00 active leader failure"
+```
+
+Start the producer:
+
+```bash
+java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar produce \
+  --output-dir runs \
+  --run-id rg-00-run-001 \
+  --count 10000 \
+  --payload-bytes 512 \
+  --interval-ms 1 \
+  > /tmp/rg-00-run-001-producer.log 2>&1 &
+producer_pid=$!
+```
+
+While the producer runs, inject the failure:
+
+```bash
+bash scripts/rg-00-leader-failure.sh rg-00-run-001 rg-00-run-001
+```
+
+The script stops only the active partition leader. It restarts that broker if the script exits before recovery. Do not stop the other brokers during this experiment.
+
+Wait for the producer and verify the records:
+
+```bash
+wait "$producer_pid"
+java -jar ground-truth/target/ground-truth-0.1.0-SNAPSHOT.jar verify \
+  --output-dir runs \
+  --run-id rg-00-run-001 \
+  --report reports/rg-00-run-001-verification.json \
+  --timeout-ms 60000
+```
+
+Keep the producer log and verification report with the run evidence. A non-zero producer exit or a verifier result other than `PASS` needs review. Do not label an unknown producer outcome as acknowledged-write loss.
+
 ### Record failure events
 
 Record the start before injecting a failure:
