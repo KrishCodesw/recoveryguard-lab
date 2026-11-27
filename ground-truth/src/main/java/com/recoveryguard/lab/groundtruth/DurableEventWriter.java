@@ -7,17 +7,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class DurableEventWriter implements AutoCloseable {
     private static final int MAX_BATCH_SIZE = 256;
+    private static final int CAPACITY = 8192;
     private static final EventLedger.Entry POISON = new EventLedger.Entry("__STOP__", Map.of());
     private static final Duration DEFAULT_CLOSE_TIMEOUT = Duration.ofSeconds(30);
     private static final long QUEUE_WAIT_MILLIS = 100;
 
     private final EventLedger ledger;
-    private final BlockingQueue<EventLedger.Entry> queue = new ArrayBlockingQueue<>(8192);
+    private final BlockingQueue<EventLedger.Entry> queue = new ArrayBlockingQueue<>(CAPACITY);
+    private final Semaphore capacity = new Semaphore(CAPACITY);
     private final AtomicReference<IOException> failure = new AtomicReference<>();
     private final Object lifecycleLock = new Object();
     private final Thread worker;
@@ -34,23 +37,39 @@ final class DurableEventWriter implements AutoCloseable {
 
     void append(String eventType, Map<String, ?> fields) throws IOException {
         EventLedger.Entry entry = new EventLedger.Entry(eventType, fields);
-        synchronized (lifecycleLock) {
-            if (closed) {
-                throw new IOException("Ledger writer is closed");
-            }
-            checkWorkerFailure();
 
-            try {
-                while (!queue.offer(entry, QUEUE_WAIT_MILLIS, TimeUnit.MILLISECONDS)) {
-                    checkWorkerFailure();
-                    if (!worker.isAlive()) {
-                        throw new IOException("Ledger writer stopped before accepting the event");
-                    }
-                }
-            } catch (InterruptedException interruptedException) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted while queuing a ledger event", interruptedException);
+        try {
+            while (!capacity.tryAcquire(QUEUE_WAIT_MILLIS, TimeUnit.MILLISECONDS)) {
+                checkAccepting();
             }
+        } catch (InterruptedException interruptedException) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while waiting for ledger capacity", interruptedException);
+        }
+
+        boolean queued = false;
+        try {
+            synchronized (lifecycleLock) {
+                checkAccepting();
+                queue.add(entry);
+                queued = true;
+            }
+        } catch (RuntimeException exception) {
+            throw new IOException("Could not enqueue ledger event", exception);
+        } finally {
+            if (!queued) {
+                capacity.release();
+            }
+        }
+    }
+
+    private void checkAccepting() throws IOException {
+        IOException existingFailure = failure.get();
+        if (existingFailure != null) {
+            throw new IOException("Ledger writer has failed", existingFailure);
+        }
+        if (closed || !worker.isAlive()) {
+            throw new IOException("Ledger writer is closed");
         }
     }
 
@@ -82,7 +101,9 @@ final class DurableEventWriter implements AutoCloseable {
                         batch.add(entry);
                     }
                 }
+
                 ledger.appendBatch(batch);
+                capacity.release(batch.size());
             }
         } catch (InterruptedException interruptedException) {
             Thread.currentThread().interrupt();
@@ -108,27 +129,36 @@ final class DurableEventWriter implements AutoCloseable {
 
         synchronized (lifecycleLock) {
             closed = true;
+        }
 
-            if (worker.isAlive() && !poisonEnqueued) {
-                try {
-                    while (worker.isAlive() && !poisonEnqueued) {
-                        long remaining = deadline - System.nanoTime();
-                        if (remaining <= 0) {
-                            throw new IOException("Timed out while requesting ledger writer shutdown");
-                        }
-                        long waitMillis = Math.max(1,
-                                Math.min(QUEUE_WAIT_MILLIS, TimeUnit.NANOSECONDS.toMillis(remaining)));
-                        if (queue.offer(POISON, waitMillis, TimeUnit.MILLISECONDS)) {
-                            poisonEnqueued = true;
-                        } else {
-                            checkWorkerFailure();
-                        }
-                    }
-                } catch (InterruptedException interruptedException) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while requesting ledger writer shutdown",
-                            interruptedException);
+        while (worker.isAlive() && !isPoisonEnqueued()) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                throw new IOException("Timed out while requesting ledger writer shutdown");
+            }
+            long waitMillis = Math.max(1,
+                    Math.min(QUEUE_WAIT_MILLIS, TimeUnit.NANOSECONDS.toMillis(remaining)));
+            try {
+                if (!capacity.tryAcquire(waitMillis, TimeUnit.MILLISECONDS)) {
+                    checkWorkerFailure();
+                    continue;
                 }
+            } catch (InterruptedException interruptedException) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while requesting ledger writer shutdown",
+                        interruptedException);
+            }
+
+            boolean queuedPoison = false;
+            synchronized (lifecycleLock) {
+                if (!poisonEnqueued && worker.isAlive()) {
+                    queue.add(POISON);
+                    poisonEnqueued = true;
+                    queuedPoison = true;
+                }
+            }
+            if (!queuedPoison) {
+                capacity.release();
             }
         }
 
@@ -148,6 +178,12 @@ final class DurableEventWriter implements AutoCloseable {
             throw new IOException("Timed out while waiting for the ledger writer to finish");
         }
         checkWorkerFailure();
+    }
+
+    private boolean isPoisonEnqueued() {
+        synchronized (lifecycleLock) {
+            return poisonEnqueued;
+        }
     }
 
     private void checkWorkerFailure() throws IOException {
