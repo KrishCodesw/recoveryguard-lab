@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -35,34 +36,21 @@ final class EventLedger {
     }
 
     void append(String eventType, Map<String, ?> fields) throws IOException {
-        if (eventType == null || eventType.isBlank()) {
-            throw new IllegalArgumentException("eventType is required");
+        appendBatch(List.of(new Entry(eventType, fields)));
+    }
+
+    void appendBatch(List<Entry> entries) throws IOException {
+        if (entries == null || entries.isEmpty()) {
+            return;
         }
 
-        ObjectNode event = JsonSupport.MAPPER.createObjectNode();
-        event.put("schemaVersion", SCHEMA_VERSION);
-        event.put("runId", runId);
-        event.put("eventId", UUID.randomUUID().toString());
-        event.put("eventType", eventType);
-        event.put("recordedAt", Instant.now().toString());
-
-        for (Map.Entry<String, ?> field : fields.entrySet()) {
-            String name = field.getKey();
-            if (name == null || name.isBlank()
-                    || name.equals("schemaVersion")
-                    || name.equals("runId")
-                    || name.equals("eventId")
-                    || name.equals("eventType")
-                    || name.equals("recordedAt")) {
-                throw new IllegalArgumentException("Invalid or reserved event field: " + name);
-            }
-            if (field.getValue() != null) {
-                event.set(name, JsonSupport.MAPPER.valueToTree(field.getValue()));
-            }
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        for (Entry entry : entries) {
+            ObjectNode event = createEvent(entry);
+            output.write((JsonSupport.MAPPER.writeValueAsString(event) + "\n")
+                    .getBytes(StandardCharsets.UTF_8));
         }
-
-        byte[] bytes = (JsonSupport.MAPPER.writeValueAsString(event) + "\n")
-                .getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = output.toByteArray();
 
         Files.createDirectories(ledgerPath.getParent());
         ReentrantLock localLock = JVM_LOCKS.computeIfAbsent(lockPath, ignored -> new ReentrantLock());
@@ -79,7 +67,10 @@ final class EventLedger {
             long size = ledgerChannel.size();
             if (size > 0) {
                 ByteBuffer lastByte = ByteBuffer.allocate(1);
-                ledgerChannel.read(lastByte, size - 1);
+                int read = ledgerChannel.read(lastByte, size - 1);
+                if (read != 1) {
+                    throw new IOException("Could not inspect the final ledger byte");
+                }
                 lastByte.flip();
                 if (lastByte.get() != (byte) '\n') {
                     throw new IOException("Ledger has an incomplete final line. Preserve it for review; do not append.");
@@ -95,6 +86,35 @@ final class EventLedger {
         } finally {
             localLock.unlock();
         }
+    }
+
+    private ObjectNode createEvent(Entry entry) {
+        if (entry.eventType() == null || entry.eventType().isBlank()) {
+            throw new IllegalArgumentException("eventType is required");
+        }
+
+        ObjectNode event = JsonSupport.MAPPER.createObjectNode();
+        event.put("schemaVersion", SCHEMA_VERSION);
+        event.put("runId", runId);
+        event.put("eventId", UUID.randomUUID().toString());
+        event.put("eventType", entry.eventType());
+        event.put("recordedAt", Instant.now().toString());
+
+        for (Map.Entry<String, ?> field : entry.fields().entrySet()) {
+            String name = field.getKey();
+            if (name == null || name.isBlank()
+                    || name.equals("schemaVersion")
+                    || name.equals("runId")
+                    || name.equals("eventId")
+                    || name.equals("eventType")
+                    || name.equals("recordedAt")) {
+                throw new IllegalArgumentException("Invalid or reserved event field: " + name);
+            }
+            if (field.getValue() != null) {
+                event.set(name, JsonSupport.MAPPER.valueToTree(field.getValue()));
+            }
+        }
+        return event;
     }
 
     List<JsonNode> readAll() throws IOException {
@@ -136,5 +156,15 @@ final class EventLedger {
 
     Path path() {
         return ledgerPath;
+    }
+
+    record Entry(String eventType, Map<String, ?> fields) {
+        Entry {
+            if (fields == null) {
+                fields = Map.of();
+            } else {
+                fields = Map.copyOf(fields);
+            }
+        }
     }
 }
