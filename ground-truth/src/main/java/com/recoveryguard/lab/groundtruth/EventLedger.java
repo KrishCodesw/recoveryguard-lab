@@ -44,14 +44,6 @@ final class EventLedger {
             return;
         }
 
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        for (Entry entry : entries) {
-            ObjectNode event = createEvent(entry);
-            output.write((JsonSupport.MAPPER.writeValueAsString(event) + "\n")
-                    .getBytes(StandardCharsets.UTF_8));
-        }
-        byte[] bytes = output.toByteArray();
-
         Files.createDirectories(ledgerPath.getParent());
         ReentrantLock localLock = JVM_LOCKS.computeIfAbsent(lockPath, ignored -> new ReentrantLock());
         localLock.lock();
@@ -63,6 +55,21 @@ final class EventLedger {
                      StandardOpenOption.CREATE,
                      StandardOpenOption.READ,
                      StandardOpenOption.WRITE)) {
+
+            List<JsonNode> existingEvents = readAll();
+            String previousHash = existingEvents.isEmpty()
+                    ? "0".repeat(64)
+                    : existingEvents.get(existingEvents.size() - 1).path("eventHash").asText();
+
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            for (Entry entry : entries) {
+                ObjectNode event = createEvent(entry, previousHash);
+                String eventHash = Hashing.sha256(JsonSupport.MAPPER.writeValueAsBytes(event));
+                event.put("eventHash", eventHash);
+                previousHash = eventHash;
+                output.write((JsonSupport.MAPPER.writeValueAsString(event) + "\n")
+                        .getBytes(StandardCharsets.UTF_8));
+            }
 
             long size = ledgerChannel.size();
             if (size > 0) {
@@ -78,7 +85,7 @@ final class EventLedger {
             }
 
             ledgerChannel.position(size);
-            ByteBuffer record = ByteBuffer.wrap(bytes);
+            ByteBuffer record = ByteBuffer.wrap(output.toByteArray());
             while (record.hasRemaining()) {
                 ledgerChannel.write(record);
             }
@@ -88,7 +95,7 @@ final class EventLedger {
         }
     }
 
-    private ObjectNode createEvent(Entry entry) {
+    private ObjectNode createEvent(Entry entry, String previousHash) {
         if (entry.eventType() == null || entry.eventType().isBlank()) {
             throw new IllegalArgumentException("eventType is required");
         }
@@ -98,7 +105,7 @@ final class EventLedger {
         event.put("runId", runId);
         event.put("eventId", UUID.randomUUID().toString());
         event.put("eventType", entry.eventType());
-        event.put("recordedAt", Instant.now().toString());
+        event.put("recordedAt", Instant.now().toString());\n        event.put("previousEventHash", previousHash);
 
         for (Map.Entry<String, ?> field : entry.fields().entrySet()) {
             String name = field.getKey();
@@ -122,7 +129,24 @@ final class EventLedger {
         if (!Files.exists(ledgerPath)) {
             throw new IOException("Ledger does not exist: " + ledgerPath);
         }
+        long fileSize = Files.size(ledgerPath);
+        if (fileSize == 0) {
+            return List.of();
+        }
+        try (FileChannel channel = FileChannel.open(ledgerPath, StandardOpenOption.READ)) {
+            ByteBuffer lastByte = ByteBuffer.allocate(1);
+            int read = channel.read(lastByte, fileSize - 1);
+            if (read != 1) {
+                throw new IOException("Could not inspect the final ledger byte");
+            }
+            lastByte.flip();
+            if (lastByte.get() != (byte) '\n') {
+                throw new IOException("Ledger has an incomplete final line");
+            }
+        }
 
+        String expectedPreviousHash = "0".repeat(64);
+        java.util.Set<String> eventIds = new java.util.HashSet<>();
         try (BufferedReader reader = Files.newBufferedReader(ledgerPath, StandardCharsets.UTF_8)) {
             String line;
             long lineNumber = 0;
@@ -131,24 +155,39 @@ final class EventLedger {
                 if (line.isBlank()) {
                     throw new IOException("Blank ledger line at line " + lineNumber);
                 }
-                JsonNode event;
+                JsonNode parsed;
                 try {
-                    event = JsonSupport.MAPPER.readTree(line);
+                    parsed = JsonSupport.MAPPER.readTree(line);
                 } catch (Exception exception) {
                     throw new IOException("Invalid JSON at ledger line " + lineNumber, exception);
                 }
-                if (!event.path("runId").asText().equals(runId)) {
+                if (!parsed.path("runId").asText().equals(runId)) {
                     throw new IOException("Ledger runId mismatch at line " + lineNumber);
                 }
-                if (event.path("schemaVersion").asInt(-1) != SCHEMA_VERSION) {
+                if (parsed.path("schemaVersion").asInt(-1) != SCHEMA_VERSION) {
                     throw new IOException("Unsupported ledger schema at line " + lineNumber);
                 }
-                if (event.path("eventId").asText().isBlank()
-                        || event.path("eventType").asText().isBlank()
-                        || event.path("recordedAt").asText().isBlank()) {
+                String eventId = parsed.path("eventId").asText();
+                String eventHash = parsed.path("eventHash").asText();
+                if (eventId.isBlank() || parsed.path("eventType").asText().isBlank()
+                        || parsed.path("recordedAt").asText().isBlank() || eventHash.isBlank()) {
                     throw new IOException("Required ledger field missing at line " + lineNumber);
                 }
-                events.add(event);
+                if (!eventIds.add(eventId)) {
+                    throw new IOException("Duplicate eventId at ledger line " + lineNumber);
+                }
+                if (!parsed.path("previousEventHash").asText().equals(expectedPreviousHash)) {
+                    throw new IOException("Ledger hash chain mismatch at line " + lineNumber);
+                }
+
+                ObjectNode eventWithoutHash = ((ObjectNode) parsed).deepCopy();
+                eventWithoutHash.remove("eventHash");
+                String computedHash = Hashing.sha256(JsonSupport.MAPPER.writeValueAsBytes(eventWithoutHash));
+                if (!computedHash.equals(eventHash)) {
+                    throw new IOException("Ledger event hash mismatch at line " + lineNumber);
+                }
+                expectedPreviousHash = eventHash;
+                events.add(parsed);
             }
         }
         return List.copyOf(events);
