@@ -93,10 +93,11 @@ class DurableEventWriterTest {
     void rejectsAppendAfterClose() throws Exception {
         EventLedger ledger = new EventLedger(temporaryDirectory.resolve("closed-run"), "closed-run");
         DurableEventWriter writer = new DurableEventWriter(ledger);
+        writer.append("BEFORE_CLOSE", Map.of("sequence", 0));
         writer.close();
 
         assertThrows(IOException.class,
                 () -> writer.append("TOO_LATE", Map.of("sequence", 1)));
-        assertTrue(ledger.readAll().isEmpty());
+        assertEquals(1, ledger.readAll().size());
     }
 }
