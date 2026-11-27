@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class DurableEventWriter implements AutoCloseable {
@@ -13,7 +13,7 @@ final class DurableEventWriter implements AutoCloseable {
     private static final EventLedger.Entry POISON = new EventLedger.Entry("__STOP__", Map.of());
 
     private final EventLedger ledger;
-    private final BlockingQueue<EventLedger.Entry> queue = new LinkedBlockingQueue<>();
+    private final BlockingQueue<EventLedger.Entry> queue = new ArrayBlockingQueue<>(8192);
     private final AtomicReference<IOException> failure = new AtomicReference<>();
     private final Thread worker;
     private volatile boolean closed;
@@ -33,7 +33,7 @@ final class DurableEventWriter implements AutoCloseable {
         if (closed) {
             throw new IOException("Ledger writer is closed");
         }
-        queue.add(new EventLedger.Entry(eventType, fields));
+        try {\n            queue.put(new EventLedger.Entry(eventType, fields));\n        } catch (InterruptedException interruptedException) {\n            Thread.currentThread().interrupt();\n            throw new IOException("Interrupted while queuing a ledger event", interruptedException);\n        }
     }
 
     private void run() {
