@@ -65,4 +65,27 @@ class EventLedgerTest {
         assertThrows(IOException.class, ledger::readAll);
     }
 
+    @Test
+    void acceptsValidAppendsFromAnotherLedgerInstance() throws Exception {
+        Path runDirectory = temporaryDirectory.resolve("shared-run");
+        EventLedger producerLedger = new EventLedger(runDirectory, "shared-run");
+        EventLedger failureRecorderLedger = new EventLedger(runDirectory, "shared-run");
+
+        producerLedger.append("RUN_CREATED", Map.of("topic", "shared-topic"));
+        failureRecorderLedger.append("FAILURE_STARTED", Map.of(
+                "failureId", "broker-2-stop",
+                "target", "kafka-2"
+        ));
+        producerLedger.append("SEND_INTENT", Map.of(
+                "recordId", "record-1",
+                "payloadSha256", "abc123"
+        ));
+
+        List<com.fasterxml.jackson.databind.JsonNode> events = producerLedger.readAll();
+        assertEquals(3, events.size());
+        assertEquals("RUN_CREATED", events.get(0).path("eventType").asText());
+        assertEquals("FAILURE_STARTED", events.get(1).path("eventType").asText());
+        assertEquals("SEND_INTENT", events.get(2).path("eventType").asText());
+    }
+
 }
