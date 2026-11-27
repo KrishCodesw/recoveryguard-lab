@@ -25,7 +25,9 @@ class DurableEventWriterTest {
 
         List<com.fasterxml.jackson.databind.JsonNode> events = ledger.readAll();
         assertEquals(600, events.size());
-        assertEquals(0, events.get(0).path("sequence").asInt(-1));
-        assertEquals(599, events.get(599).path("sequence").asInt(-1));
+        for (int index = 0; index < events.size(); index++) {
+            assertEquals(index, events.get(index).path("sequence").asInt(-1),
+                    "Unexpected event sequence at index " + index);
+        }
     }
 }
