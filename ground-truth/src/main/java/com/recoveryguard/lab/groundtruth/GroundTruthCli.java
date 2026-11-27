@@ -1,11 +1,11 @@
 package com.recoveryguard.lab.groundtruth;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public final class GroundTruthCli {
     private GroundTruthCli() {
@@ -32,6 +32,7 @@ public final class GroundTruthCli {
 
         String command = args[0];
         Map<String, String> options = parseOptions(args);
+        validateOptions(command, options);
         Path outputDirectory = Path.of(options.getOrDefault("output-dir", "runs"));
         RunStore runStore = new RunStore(outputDirectory);
 
@@ -95,8 +96,9 @@ public final class GroundTruthCli {
             case "verify" -> {
                 require(options, "run-id");
                 RunStore.Run run = runStore.load(options.get("run-id"));
+                String defaultReportName = run.runId() + "-verification-" + UUID.randomUUID() + ".json";
                 Path report = Path.of(options.getOrDefault(
-                        "report", "reports/" + run.runId() + "-verification.json"));
+                        "report", "reports/" + defaultReportName));
                 long timeoutMs = parsePositiveLong(options.getOrDefault("timeout-ms", "60000"), "timeout-ms");
                 RecordVerifier.VerificationResult result =
                         new RecordVerifier().verify(run, report, timeoutMs);
@@ -116,6 +118,26 @@ public final class GroundTruthCli {
             }
             default -> {
                 throw new IllegalArgumentException("Unknown command: " + command);
+            }
+        }
+    }
+
+    private static void validateOptions(String command, Map<String, String> options) {
+        Map<String, java.util.Set<String>> supported = Map.of(
+                "create", java.util.Set.of("topic", "bootstrap-servers", "output-dir", "run-id", "description"),
+                "produce", java.util.Set.of("run-id", "count", "output-dir", "payload-bytes", "interval-ms"),
+                "failure-start", java.util.Set.of("run-id", "failure-id", "target", "action", "output-dir", "details"),
+                "failure-end", java.util.Set.of("run-id", "failure-id", "result", "output-dir", "details"),
+                "verify", java.util.Set.of("run-id", "output-dir", "report", "timeout-ms"),
+                "show-ledger", java.util.Set.of("run-id", "output-dir")
+        );
+        java.util.Set<String> allowed = supported.get(command);
+        if (allowed == null) {
+            throw new IllegalArgumentException("Unknown command: " + command);
+        }
+        for (String option : options.keySet()) {
+            if (!allowed.contains(option)) {
+                throw new IllegalArgumentException("Unsupported option for " + command + ": --" + option);
             }
         }
     }
