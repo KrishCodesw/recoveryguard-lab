@@ -16,10 +16,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -50,28 +50,33 @@ final class RecordVerifier {
                     if (id.isBlank()) {
                         throw new IOException("SEND_INTENT has no recordId");
                     }
-                    String previous = intentHashes.putIfAbsent(id, event.path("payloadSha256").asText(""));
-                    if (previous != null) {
+                    String hash = event.path("payloadSha256").asText("");
+                    if (!hash.matches("[0-9a-f]{64}")) {
+                        throw new IOException("SEND_INTENT has an invalid payload hash: " + id);
+                    }
+                    if (intentHashes.putIfAbsent(id, hash) != null) {
                         throw new IOException("Duplicate SEND_INTENT for recordId " + id);
                     }
                 }
                 case "ACK_CONFIRMED" -> {
-                    if (id.isBlank() || !intentHashes.containsKey(id)) {
-                        // Event order is not guaranteed across producer callbacks. Check after parsing all events.
+                    if (id.isBlank()) {
+                        throw new IOException("ACK_CONFIRMED has no recordId");
                     }
                     if (confirmedAcks.putIfAbsent(id, event) != null) {
                         contradictoryOutcomes++;
                     }
                 }
                 case "OUTCOME_UNKNOWN" -> {
-                    if (!id.isBlank()) {
-                        unknownOutcomes.add(id);
+                    if (id.isBlank()) {
+                        throw new IOException("OUTCOME_UNKNOWN has no recordId");
                     }
+                    unknownOutcomes.add(id);
                 }
                 case "SEND_ERROR" -> {
-                    if (!id.isBlank()) {
-                        failedOutcomes.add(id);
+                    if (id.isBlank()) {
+                        throw new IOException("SEND_ERROR has no recordId");
                     }
+                    failedOutcomes.add(id);
                 }
                 default -> {
                     // Run, producer batch, and failure-injector events are not record outcomes.
@@ -79,9 +84,30 @@ final class RecordVerifier {
             }
         }
 
-        for (String id : confirmedAcks.keySet()) {
+        for (Map.Entry<String, JsonNode> ackEntry : confirmedAcks.entrySet()) {
+            String id = ackEntry.getKey();
+            JsonNode ack = ackEntry.getValue();
             if (!intentHashes.containsKey(id)) {
                 throw new IOException("ACK_CONFIRMED has no matching SEND_INTENT: " + id);
+            }
+            if (!intentHashes.get(id).equals(ack.path("payloadSha256").asText())) {
+                throw new IOException("ACK_CONFIRMED payload hash does not match SEND_INTENT: " + id);
+            }
+            if (!run.topic().equals(ack.path("topic").asText())) {
+                throw new IOException("ACK_CONFIRMED topic does not match run topic: " + id);
+            }
+            if (ack.path("partition").asInt(-1) < 0 || ack.path("offset").asLong(-1) < 0) {
+                throw new IOException("ACK_CONFIRMED has invalid partition or offset: " + id);
+            }
+        }
+        for (String id : unknownOutcomes) {
+            if (!intentHashes.containsKey(id)) {
+                throw new IOException("OUTCOME_UNKNOWN has no matching SEND_INTENT: " + id);
+            }
+        }
+        for (String id : failedOutcomes) {
+            if (!intentHashes.containsKey(id)) {
+                throw new IOException("SEND_ERROR has no matching SEND_INTENT: " + id);
             }
         }
 
@@ -99,10 +125,17 @@ final class RecordVerifier {
         int duplicateRecordIdCount = 0;
         int unknownFoundCount = 0;
         int unknownMissingCount = 0;
-        int unresolvedIntentCount = 0;
+        int unresolvedIntentFoundCount = 0;
+        int unresolvedIntentMissingCount = 0;
         int untrackedRecordCount = 0;
 
         Set<String> allLedgerIds = new HashSet<>(intentHashes.keySet());
+        for (List<ObservedRecord> records : observedById.values()) {
+            if (records.size() > 1) {
+                duplicateRecordIdCount++;
+            }
+        }
+
         for (Map.Entry<String, JsonNode> ackEntry : confirmedAcks.entrySet()) {
             String id = ackEntry.getKey();
             JsonNode expected = ackEntry.getValue();
@@ -110,9 +143,6 @@ final class RecordVerifier {
             if (actual.isEmpty()) {
                 missingCount++;
                 continue;
-            }
-            if (actual.size() > 1) {
-                duplicateRecordIdCount++;
             }
 
             String expectedHash = expected.path("payloadSha256").asText("");
@@ -143,6 +173,9 @@ final class RecordVerifier {
             List<ObservedRecord> actual = observedById.getOrDefault(id, List.of());
             if (actual.isEmpty()) {
                 unknownMissingCount++;
+            } else if (actual.stream().noneMatch(
+                    record -> record.payloadSha256().equals(intentHashes.get(id)))) {
+                payloadMismatchCount++;
             } else {
                 unknownFoundCount++;
             }
@@ -152,7 +185,15 @@ final class RecordVerifier {
             if (!confirmedAcks.containsKey(id)
                     && !unknownOutcomes.contains(id)
                     && !failedOutcomes.contains(id)) {
-                unresolvedIntentCount++;
+                List<ObservedRecord> actual = observedById.getOrDefault(id, List.of());
+                if (actual.isEmpty()) {
+                    unresolvedIntentMissingCount++;
+                } else if (actual.stream().noneMatch(
+                        record -> record.payloadSha256().equals(intentHashes.get(id)))) {
+                    payloadMismatchCount++;
+                } else {
+                    unresolvedIntentFoundCount++;
+                }
             }
         }
 
@@ -169,7 +210,7 @@ final class RecordVerifier {
                 || locationMismatchCount > 0 || duplicateRecordIdCount > 0
                 || contradictoryOutcomes > 0) {
             status = "INTEGRITY_FAILURE";
-        } else if (unknownMissingCount > 0 || unresolvedIntentCount > 0) {
+        } else if (unknownMissingCount > 0 || unresolvedIntentMissingCount > 0) {
             status = "INCONCLUSIVE";
         } else if (confirmedCount == 0) {
             status = "INCOMPLETE";
@@ -192,11 +233,13 @@ final class RecordVerifier {
         report.put("duplicateRecordIds", scanComplete ? duplicateRecordIdCount : 0);
         report.put("unknownOutcomesFound", scanComplete ? unknownFoundCount : 0);
         report.put("unknownOutcomesMissing", scanComplete ? unknownMissingCount : 0);
-        report.put("unresolvedSendIntents", unresolvedIntentCount);
+        report.put("unresolvedIntentsFound", scanComplete ? unresolvedIntentFoundCount : 0);
+        report.put("unresolvedIntentsMissing", scanComplete ? unresolvedIntentMissingCount : 0);
         report.put("contradictoryProducerOutcomes", contradictoryOutcomes);
         report.put("untrackedRecords", scanComplete ? untrackedRecordCount : 0);
         report.put("consumerGroupJoined", false);
         report.put("offsetsCommitted", false);
+        report.put("isolationLevel", "read_uncommitted");
 
         if (reportPath != null) {
             Path absoluteReportPath = reportPath.toAbsolutePath().normalize();
@@ -211,7 +254,9 @@ final class RecordVerifier {
                     absoluteReportPath,
                     JsonSupport.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(report)
                             + System.lineSeparator(),
-                    StandardCharsets.UTF_8
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE_NEW,
+                    StandardOpenOption.WRITE
             );
         }
 
