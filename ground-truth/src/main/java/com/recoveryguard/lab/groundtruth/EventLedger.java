@@ -114,7 +114,7 @@ final class EventLedger {
                     || name.equals("runId")
                     || name.equals("eventId")
                     || name.equals("eventType")
-                    || name.equals("recordedAt")) {
+                    || name.equals("recordedAt")\n                    || name.equals("previousEventHash")\n                    || name.equals("eventHash")) {
                 throw new IllegalArgumentException("Invalid or reserved event field: " + name);
             }
             if (field.getValue() != null) {
