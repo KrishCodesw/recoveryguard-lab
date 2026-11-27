@@ -310,9 +310,7 @@ final class RecordVerifier {
                 ConsumerRecords<String, String> records = consumer.poll(pollTimeout);
 
                 for (ConsumerRecord<String, String> record : records) {
-                    TopicPartition partition = new TopicPartition(record.topic(), record.partition());
-                    long capturedEndOffset = endOffsets.getOrDefault(partition, 0L);
-                    if (record.offset() >= capturedEndOffset || record.key() == null) {
+                    if (!isBeforeCapturedEndOffset(record, endOffsets) || record.key() == null) {
                         continue;
                     }
 
@@ -351,6 +349,13 @@ final class RecordVerifier {
             }
         }
         return recordsById;
+    }
+
+    static boolean isBeforeCapturedEndOffset(
+            ConsumerRecord<String, String> record,
+            Map<TopicPartition, Long> endOffsets) {
+        TopicPartition partition = new TopicPartition(record.topic(), record.partition());
+        return record.offset() < endOffsets.getOrDefault(partition, 0L);
     }
 
     record VerificationResult(String status, ObjectNode report) {
