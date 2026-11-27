@@ -28,6 +28,8 @@ final class EventLedger {
     private final Path ledgerPath;
     private final Path lockPath;
     private final String runId;
+    private String lastEventHash = "0".repeat(64);
+    private long knownFileSize = -1;
 
     EventLedger(Path runDirectory, String runId) {
         this.ledgerPath = runDirectory.resolve("events.jsonl").toAbsolutePath().normalize();
@@ -56,22 +58,17 @@ final class EventLedger {
                      StandardOpenOption.READ,
                      StandardOpenOption.WRITE)) {
 
-            List<JsonNode> existingEvents = readAll();
-            String previousHash = existingEvents.isEmpty()
-                    ? "0".repeat(64)
-                    : existingEvents.get(existingEvents.size() - 1).path("eventHash").asText();
-
-            ByteArrayOutputStream output = new ByteArrayOutputStream();
-            for (Entry entry : entries) {
-                ObjectNode event = createEvent(entry, previousHash);
-                String eventHash = Hashing.sha256(JsonSupport.MAPPER.writeValueAsBytes(event));
-                event.put("eventHash", eventHash);
-                previousHash = eventHash;
-                output.write((JsonSupport.MAPPER.writeValueAsString(event) + "\n")
-                        .getBytes(StandardCharsets.UTF_8));
+            long size = ledgerChannel.size();
+            if (knownFileSize < 0) {
+                List<JsonNode> existingEvents = readAll();
+                lastEventHash = existingEvents.isEmpty()
+                        ? "0".repeat(64)
+                        : existingEvents.get(existingEvents.size() - 1).path("eventHash").asText();
+                knownFileSize = size;
+            } else if (size != knownFileSize) {
+                throw new IOException("Ledger size changed outside this writer. Refuse to append.");
             }
 
-            long size = ledgerChannel.size();
             if (size > 0) {
                 ByteBuffer lastByte = ByteBuffer.allocate(1);
                 int read = ledgerChannel.read(lastByte, size - 1);
@@ -84,12 +81,26 @@ final class EventLedger {
                 }
             }
 
+            String previousHash = lastEventHash;
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            for (Entry entry : entries) {
+                ObjectNode event = createEvent(entry, previousHash);
+                String eventHash = Hashing.sha256(JsonSupport.MAPPER.writeValueAsBytes(event));
+                event.put("eventHash", eventHash);
+                previousHash = eventHash;
+                output.write((JsonSupport.MAPPER.writeValueAsString(event) + "\n")
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+
+            byte[] batchBytes = output.toByteArray();
             ledgerChannel.position(size);
-            ByteBuffer record = ByteBuffer.wrap(output.toByteArray());
+            ByteBuffer record = ByteBuffer.wrap(batchBytes);
             while (record.hasRemaining()) {
                 ledgerChannel.write(record);
             }
             ledgerChannel.force(true);
+            knownFileSize = size + batchBytes.length;
+            lastEventHash = previousHash;
         } finally {
             localLock.unlock();
         }
