@@ -58,7 +58,6 @@ Broker data uses a temporary filesystem. It remains available when a container r
 - The cluster uses plaintext communication. Do not use it for production data or expose its ports to an untrusted network.
 - The fixed cluster ID and temporary broker data directories are for this disposable test cluster. Container removal deletes broker data.
 
-
 ## Independent ground-truth recorder
 
 The `ground-truth/` Maven module provides an independent producer, acknowledgement ledger, failure-event recorder, and Kafka record verifier. It is Lab code only. It must not import RecoveryGuard product classes or use a product verdict as ground truth.
