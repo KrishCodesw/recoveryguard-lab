@@ -1,0 +1,9 @@
+# Ground-truth run data and reports
+/runs/
+/reports/
+/ground-truth/runs/
+/ground-truth/reports/
+
+# Maven output
+/ground-truth/target/
+**/target/
