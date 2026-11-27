@@ -57,7 +57,8 @@ public final class GroundTruthCli {
                 RunStore.Run run = runStore.load(options.get("run-id"));
                 int count = parsePositiveInt(options.get("count"), "count");
                 int payloadBytes = parsePositiveInt(options.getOrDefault("payload-bytes", "256"), "payload-bytes");
-                int confirmed = new WorkloadProducer().produce(run, count, payloadBytes);
+                long intervalMs = Long.parseLong(options.getOrDefault("interval-ms", "0"));
+                int confirmed = new WorkloadProducer().produce(run, count, payloadBytes, intervalMs);
                 ObjectNode result = JsonSupport.MAPPER.createObjectNode();
                 result.put("runId", run.runId());
                 result.put("requested", count);
@@ -180,7 +181,7 @@ public final class GroundTruthCli {
                 Commands:
                   create --topic TOPIC --bootstrap-servers HOSTS [--output-dir DIR]
                          [--run-id ID] [--description TEXT]
-                  produce --run-id ID --count N [--output-dir DIR] [--payload-bytes N]
+                  produce --run-id ID --count N [--output-dir DIR] [--payload-bytes N]\n                          [--interval-ms N]
                   failure-start --run-id ID --failure-id ID --target NODE --action ACTION
                                [--output-dir DIR] [--details TEXT]
                   failure-end --run-id ID --failure-id ID --result RESULT
