@@ -46,17 +46,20 @@ final class EventLedger {
             return;
         }
 
-        Files.createDirectories(ledgerPath.getParent());
+        FileDurability.createDirectories(ledgerPath.getParent());
         ReentrantLock localLock = JVM_LOCKS.computeIfAbsent(lockPath, ignored -> new ReentrantLock());
         localLock.lock();
+        boolean lockFileExisted = Files.exists(lockPath);
         try (FileChannel lockChannel = FileChannel.open(
                      lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-             FileLock ignored = lockChannel.lock();
-             FileChannel ledgerChannel = FileChannel.open(
-                     ledgerPath,
-                     StandardOpenOption.CREATE,
-                     StandardOpenOption.READ,
-                     StandardOpenOption.WRITE)) {
+             FileLock ignored = lockChannel.lock()) {
+
+            boolean ledgerFileExisted = Files.exists(ledgerPath);
+            try (FileChannel ledgerChannel = FileChannel.open(
+                    ledgerPath,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.READ,
+                    StandardOpenOption.WRITE)) {
 
             long size = ledgerChannel.size();
             if (knownFileSize < 0) {
@@ -101,6 +104,11 @@ final class EventLedger {
             ledgerChannel.force(true);
             knownFileSize = size + batchBytes.length;
             lastEventHash = previousHash;
+
+            if (!ledgerFileExisted || !lockFileExisted) {
+                FileDurability.forceDirectory(ledgerPath.getParent());
+            }
+            }
         } finally {
             localLock.unlock();
         }
