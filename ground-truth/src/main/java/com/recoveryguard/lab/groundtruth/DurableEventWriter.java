@@ -33,7 +33,12 @@ final class DurableEventWriter implements AutoCloseable {
         if (closed) {
             throw new IOException("Ledger writer is closed");
         }
-        try {\n            queue.put(new EventLedger.Entry(eventType, fields));\n        } catch (InterruptedException interruptedException) {\n            Thread.currentThread().interrupt();\n            throw new IOException("Interrupted while queuing a ledger event", interruptedException);\n        }
+        try {
+            queue.put(new EventLedger.Entry(eventType, fields));
+        } catch (InterruptedException interruptedException) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while queuing a ledger event", interruptedException);
+        }
     }
 
     private void run() {
@@ -80,8 +85,10 @@ final class DurableEventWriter implements AutoCloseable {
             return;
         }
         closed = true;
-        queue.add(POISON);
         try {
+            if (worker.isAlive()) {
+                queue.put(POISON);
+            }
             worker.join();
         } catch (InterruptedException interruptedException) {
             Thread.currentThread().interrupt();
