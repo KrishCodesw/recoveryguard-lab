@@ -25,7 +25,7 @@ final class DurableEventWriter implements AutoCloseable {
     private final Object lifecycleLock = new Object();
     private final Thread worker;
 
-    private boolean closed;
+    private volatile boolean closed;
     private boolean poisonEnqueued;
 
     DurableEventWriter(EventLedger ledger) {
@@ -136,10 +136,9 @@ final class DurableEventWriter implements AutoCloseable {
             if (remaining <= 0) {
                 throw new IOException("Timed out while requesting ledger writer shutdown");
             }
-            long waitMillis = Math.max(1,
-                    Math.min(QUEUE_WAIT_MILLIS, TimeUnit.NANOSECONDS.toMillis(remaining)));
+            long waitNanos = Math.min(TimeUnit.MILLISECONDS.toNanos(QUEUE_WAIT_MILLIS), remaining);
             try {
-                if (!capacity.tryAcquire(waitMillis, TimeUnit.MILLISECONDS)) {
+                if (!capacity.tryAcquire(waitNanos, TimeUnit.NANOSECONDS)) {
                     checkWorkerFailure();
                     continue;
                 }
