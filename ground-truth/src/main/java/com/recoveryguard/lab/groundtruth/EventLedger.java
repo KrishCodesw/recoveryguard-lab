@@ -164,7 +164,7 @@ final class EventLedger {
                 } catch (Exception exception) {
                     throw new IOException("Invalid JSON at ledger line " + lineNumber, exception);
                 }
-                if (!parsed.path("runId").asText().equals(runId)) {
+                if (!parsed.isObject()) {\n                    throw new IOException("Ledger event is not a JSON object at line " + lineNumber);\n                }\n                if (!parsed.path("runId").asText().equals(runId)) {
                     throw new IOException("Ledger runId mismatch at line " + lineNumber);
                 }
                 if (parsed.path("schemaVersion").asInt(-1) != SCHEMA_VERSION) {
