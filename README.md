@@ -224,7 +224,7 @@ Possible statuses:
 |---|---|
 | `PASS` | Every confirmed write was found once at its recorded location, with its expected payload hash. |
 | `INTEGRITY_FAILURE` | A confirmed write is missing, changed, duplicated, or has an inconsistent location or producer outcome. |
-| `INCONCLUSIVE` | One or more records have an unknown or unresolved producer outcome and are missing after recovery. |
+| `INCONCLUSIVE` | One or more records have an unknown or unresolved producer outcome. The report shows whether each record was found. |
 | `INCOMPLETE` | The topic scan did not reach all captured end offsets, or the run has no confirmed writes. |
 
 A verifier report with `PASS` proves record preservation for this topic scan. It does not prove KRaft quorum health, replica placement, reassignment completion, or application-level correctness. Stage 4 will decide how those checks can use approved evidence.
