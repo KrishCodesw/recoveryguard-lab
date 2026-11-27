@@ -56,8 +56,8 @@ final class WorkloadProducer {
         int sendAttempts = 0;
 
         try {
-            producer = new KafkaProducer<>(properties);
             deadline = System.nanoTime() + PRODUCER_DEADLINE.toNanos();
+            producer = new KafkaProducer<>(properties);
 
             List<PendingSend> batch = new ArrayList<>(INTENT_BATCH_SIZE);
             for (int index = 0; index < count; index++) {
