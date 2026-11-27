@@ -70,6 +70,7 @@ The `ground-truth/` Maven module provides an independent producer, acknowledgeme
 - The Lab Kafka cluster must be running
 - A separate, non-compacted topic for each run
 - Enough topic retention to complete the test and verification
+- A filesystem that supports directory synchronization for durable run creation
 
 ### Build and test
 
@@ -237,7 +238,7 @@ java -jar target/ground-truth-0.1.0-SNAPSHOT.jar show-ledger \
   --run-id rg-001
 ```
 
-The ledger uses a SHA-256 hash chain. It detects edits to existing events, reordering, and removal of an event from the middle of the chain. It cannot detect removal of a complete final suffix unless the expected terminal hash or event count is stored independently. It also cannot stop an actor who can rewrite the complete file and recompute the chain. An incomplete final line is rejected.
+The ledger uses a SHA-256 hash chain. It detects edits to existing events, reordering, and removal of an event from the middle of the chain. It cannot detect removal of a complete final suffix unless the expected terminal hash or event count is stored independently. It also cannot stop an actor who can rewrite the complete file and recompute the chain. An incomplete final line is rejected. The recorder synchronizes each evidence file and its containing directory before it reports successful creation. The filesystem must support directory synchronization; the recorder reports an error when the filesystem does not support it.
 
 ### Run records and reports
 
