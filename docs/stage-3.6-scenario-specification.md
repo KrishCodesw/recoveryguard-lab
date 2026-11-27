@@ -526,15 +526,50 @@ Stage 3.6 is complete only when:
 
 ---
 
-## 11. Approval gates
+## 11. Execution status and validated baseline
 
-This specification does not authorize implementation of all scenarios in one change.
+### RG-00 run record: `rg-00-run-004`
 
-Before Task 3.6.2 starts, review and approve:
+One clean RG-00 run completed with a PASS result. The run used the three-broker combined KRaft profile, Kafka image `apache/kafka:4.4.0`, one partition, replication factor 3, and `min.insync.replicas=2`.
 
-1. The primary scenario set and execution order.
-2. The ground-truth event model and the rule for unknown producer outcomes.
-3. The advanced Lab profiles required for RG-02, RG-03, and RG-04.
-4. The evidence gaps to carry into Stage 4.
+| Measurement | Result |
+|---|---:|
+| Confirmed writes | 10,000 |
+| Preserved writes | 10,000 |
+| Missing confirmed writes | 0 |
+| Payload mismatches | 0 |
+| Location mismatches | 0 |
+| Duplicate record IDs | 0 |
+| Unknown outcomes | 0 |
+| Unresolved intents | 0 |
+| Contradictory producer outcomes | 0 |
+| Untracked records | 0 |
+| Verifier status | `PASS` |
 
-After approval, implement the ground-truth recorder first. Do not modify RecoveryGuard product behavior during that task.
+The initial leader was broker 3. The failure injector stopped broker 3. Kafka elected broker 1. Broker 3 restarted and the ISR returned to brokers 1, 2, and 3.
+
+This is one valid run for one configuration. It does not satisfy the repeated-run acceptance requirement for the complete Stage 3.6 scenario set. Earlier runs with reused topics were contaminated by records from prior runs and are not valid data-loss evidence. Do not use them as successful or failed recovery measurements.
+
+### Completed Lab capabilities
+
+- The independent ground-truth recorder is implemented.
+- The RG-00 active leader failure injector is implemented.
+- The record verifier checks confirmed writes against the external ledger.
+- Product Observer integration is exercised by the product repository workflow using a pinned Lab revision.
+
+### Remaining experiment work
+
+RG-01 through RG-06 and the advanced profiles remain separate work items unless a run record in this repository proves their completion. The controller-only, separate-storage, Kubernetes/Strimzi, and real availability-zone profiles are not represented by the current Compose topology.
+
+## 12. Change and approval gates
+
+Do not implement every scenario in one change. Before each new scenario:
+
+1. Approve the scenario objective and acceptance criteria.
+2. Confirm the Lab topology can isolate the intended fault.
+3. Define the independent ground-truth events and unknown-outcome rules.
+4. Identify the product evidence required and document any gaps.
+5. Add a unique run manifest and repeatable failure procedure.
+6. Run the required repetitions and preserve all results, including failed and inconclusive runs.
+
+Product evidence schemas and verdict rules require separate approval in the RecoveryGuard product repository. Lab changes do not authorize product contract changes.
