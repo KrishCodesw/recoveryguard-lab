@@ -20,7 +20,7 @@ final class WorkloadProducer {
     private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(10);
     private static final long CALLBACK_TIMEOUT_SECONDS = 300;
 
-    int produce(RunStore.Run run, int count, int payloadBytes) throws Exception {
+    int produce(RunStore.Run run, int count, int payloadBytes, long intervalMs) throws Exception {
         if (count < 1 || count > 1_000_000) {
             throw new IllegalArgumentException("count must be between 1 and 1000000");
         }
