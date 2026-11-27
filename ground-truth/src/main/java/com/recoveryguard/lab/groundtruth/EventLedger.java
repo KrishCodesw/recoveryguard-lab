@@ -105,7 +105,8 @@ final class EventLedger {
         event.put("runId", runId);
         event.put("eventId", UUID.randomUUID().toString());
         event.put("eventType", entry.eventType());
-        event.put("recordedAt", Instant.now().toString());\n        event.put("previousEventHash", previousHash);
+        event.put("recordedAt", Instant.now().toString());
+        event.put("previousEventHash", previousHash);
 
         for (Map.Entry<String, ?> field : entry.fields().entrySet()) {
             String name = field.getKey();
