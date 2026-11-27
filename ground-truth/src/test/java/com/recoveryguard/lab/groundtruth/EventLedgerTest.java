@@ -51,4 +51,18 @@ class EventLedgerTest {
         assertThrows(IOException.class,
                 () -> ledger.append("RUN_CREATED", Map.of("topic", "test-topic")));
     }
+    @Test
+    void detectsChangesToExistingLedgerEvents() throws Exception {
+        EventLedger ledger = new EventLedger(temporaryDirectory.resolve("run-3"), "run-3");
+        ledger.append("SEND_INTENT", Map.of(
+                "recordId", "record-original",
+                "payloadSha256", "abc123"
+        ));
+
+        String changed = Files.readString(ledger.path()).replace("record-original", "record-edited");
+        Files.writeString(ledger.path(), changed);
+
+        assertThrows(IOException.class, ledger::readAll);
+    }
+
 }
