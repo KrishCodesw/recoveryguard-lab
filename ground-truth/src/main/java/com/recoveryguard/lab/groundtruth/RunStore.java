@@ -38,12 +38,13 @@ final class RunStore {
             throw new IllegalArgumentException("bootstrapServers is required");
         }
 
-        Files.createDirectories(outputDirectory);
+        FileDurability.createDirectories(outputDirectory);
         Path runDirectory = outputDirectory.resolve(runId).normalize();
         if (!runDirectory.startsWith(outputDirectory)) {
             throw new IllegalArgumentException("Invalid runId path");
         }
         Files.createDirectory(runDirectory);
+        FileDurability.forceDirectory(outputDirectory);
 
         ObjectNode manifest = JsonSupport.MAPPER.createObjectNode();
         manifest.put("schemaVersion", 1);
@@ -67,6 +68,7 @@ final class RunStore {
             }
             channel.force(true);
         }
+        FileDurability.forceDirectory(runDirectory);
 
         EventLedger ledger = new EventLedger(runDirectory, runId);
         ledger.append("RUN_CREATED", Map.of(
