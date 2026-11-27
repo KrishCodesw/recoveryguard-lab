@@ -96,9 +96,9 @@ public final class GroundTruthCli {
             case "verify" -> {
                 require(options, "run-id");
                 RunStore.Run run = runStore.load(options.get("run-id"));
-                String defaultReportName = run.runId() + "-verification-" + UUID.randomUUID() + ".json";
-                Path report = Path.of(options.getOrDefault(
-                        "report", "reports/" + defaultReportName));
+                Path report = options.containsKey("report")
+                        ? Path.of(options.get("report"))
+                        : defaultReportPath(run);
                 long timeoutMs = parsePositiveLong(options.getOrDefault("timeout-ms", "60000"), "timeout-ms");
                 RecordVerifier.VerificationResult result =
                         new RecordVerifier().verify(run, report, timeoutMs);
@@ -120,6 +120,11 @@ public final class GroundTruthCli {
                 throw new IllegalArgumentException("Unknown command: " + command);
             }
         }
+    }
+
+    static Path defaultReportPath(RunStore.Run run) {
+        String reportName = run.runId() + "-verification-" + UUID.randomUUID() + ".json";
+        return Path.of("reports", reportName);
     }
 
     private static void validateOptions(String command, Map<String, String> options) {
