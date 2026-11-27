@@ -1,0 +1,42 @@
+name: Ground-truth recorder CI
+
+on:
+  pull_request:
+    paths:
+      - "ground-truth/**"
+      - ".github/workflows/ground-truth.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "ground-truth/**"
+      - ".github/workflows/ground-truth.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ground-truth-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test ground-truth recorder
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: ground-truth/pom.xml
+
+      - name: Build and test
+        run: mvn --batch-mode --no-transfer-progress -f ground-truth/pom.xml clean verify package
