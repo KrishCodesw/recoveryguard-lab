@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicReference;\nimport java.util.concurrent.TimeUnit;
 
 final class DurableEventWriter implements AutoCloseable {
     private static final int MAX_BATCH_SIZE = 256;
@@ -34,7 +34,16 @@ final class DurableEventWriter implements AutoCloseable {
             throw new IOException("Ledger writer is closed");
         }
         try {
-            queue.put(new EventLedger.Entry(eventType, fields));
+            EventLedger.Entry entry = new EventLedger.Entry(eventType, fields);
+            while (!queue.offer(entry, 100, TimeUnit.MILLISECONDS)) {
+                IOException writerFailure = failure.get();
+                if (writerFailure != null) {
+                    throw new IOException("Ledger writer has failed", writerFailure);
+                }
+                if (closed || !worker.isAlive()) {
+                    throw new IOException("Ledger writer is not accepting events");
+                }
+            }
         } catch (InterruptedException interruptedException) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while queuing a ledger event", interruptedException);
