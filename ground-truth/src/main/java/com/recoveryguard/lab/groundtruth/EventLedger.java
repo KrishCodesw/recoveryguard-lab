@@ -60,13 +60,13 @@ final class EventLedger {
 
             long size = ledgerChannel.size();
             if (knownFileSize < 0) {
-                List<JsonNode> existingEvents = readAll();
-                lastEventHash = existingEvents.isEmpty()
-                        ? "0".repeat(64)
-                        : existingEvents.get(existingEvents.size() - 1).path("eventHash").asText();
-                knownFileSize = size;
-            } else if (size != knownFileSize) {
-                throw new IOException("Ledger size changed outside this writer. Refuse to append.");
+                refreshAppendState(size);
+            } else if (size < knownFileSize) {
+                throw new IOException("Ledger was truncated outside this writer. Refuse to append.");
+            } else if (size > knownFileSize) {
+                // Another EventLedger instance may have appended while holding the same OS file lock.
+                // Validate the full chain before accepting its new terminal hash.
+                refreshAppendState(size);
             }
 
             if (size > 0) {
@@ -104,6 +104,14 @@ final class EventLedger {
         } finally {
             localLock.unlock();
         }
+    }
+
+    private void refreshAppendState(long currentSize) throws IOException {
+        List<JsonNode> existingEvents = readAll();
+        lastEventHash = existingEvents.isEmpty()
+                ? "0".repeat(64)
+                : existingEvents.get(existingEvents.size() - 1).path("eventHash").asText();
+        knownFileSize = currentSize;
     }
 
     private ObjectNode createEvent(Entry entry, String previousHash) {
