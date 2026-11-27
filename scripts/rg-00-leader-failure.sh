@@ -16,6 +16,41 @@ if [[ -z "$RUN_ID" || -z "$TOPIC" ]]; then
   exit 2
 fi
 
+if [[ ! "$RUN_ID" =~ ^[A-Za-z0-9._-]{1,80}$ ]]; then
+  echo "Invalid run ID. Use 1-80 letters, digits, dots, underscores, or hyphens." >&2
+  exit 2
+fi
+
+if ! [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "TIMEOUT_SECONDS must be a positive integer." >&2
+  exit 2
+fi
+
+if ! command -v jq >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
+  echo "This script requires jq and GNU timeout." >&2
+  exit 2
+fi
+
+MANIFEST="$OUTPUT_DIR/$RUN_ID/manifest.json"
+if [[ ! -f "$MANIFEST" ]]; then
+  echo "Run manifest not found: $MANIFEST" >&2
+  exit 2
+fi
+
+manifest_run_id="$(jq -er '.runId | strings' "$MANIFEST")" || {
+  echo "Run manifest has no valid runId." >&2
+  exit 2
+}
+manifest_topic="$(jq -er '.topic | strings' "$MANIFEST")" || {
+  echo "Run manifest has no valid topic." >&2
+  exit 2
+}
+if [[ "$manifest_run_id" != "$RUN_ID" || "$manifest_topic" != "$TOPIC" ]]; then
+  echo "Run manifest mismatch. Run ID: $manifest_run_id; topic: $manifest_topic." >&2
+  echo "Refusing to stop any broker." >&2
+  exit 2
+fi
+
 if [[ ! -f "$JAR" ]]; then
   echo "Ground-truth JAR not found. Build it first: mvn -f ground-truth/pom.xml clean verify" >&2
   exit 2
@@ -25,6 +60,7 @@ failure_started=0
 broker_stopped=0
 failure_ended=0
 failed_service=""
+deadline=0
 
 ground_truth() {
   java -jar "$JAR" "$@" --output-dir "$OUTPUT_DIR"
@@ -53,11 +89,14 @@ running_services() {
 }
 
 describe_topic() {
-  local service
+  local service remaining
   while IFS= read -r service; do
     [[ -n "$service" ]] || continue
-    if docker compose exec -T "$service" /opt/kafka/bin/kafka-topics.sh \
-      --bootstrap-server localhost:9092 --describe --topic "$TOPIC" 2>/dev/null; then
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    if timeout --signal=TERM "${remaining}s" docker compose exec -T "$service" \
+      /opt/kafka/bin/kafka-topics.sh \
+      --bootstrap-server "$service:19092" --describe --topic "$TOPIC" 2>/dev/null; then
       return 0
     fi
   done < <(running_services)
@@ -99,8 +138,9 @@ isr_count() {
 }
 
 echo "Checking RG-00 preconditions..."
+deadline=$((SECONDS + TIMEOUT_SECONDS))
 state="$(partition_state)" || {
-  echo "Could not read exactly one partition for topic $TOPIC." >&2
+  echo "Could not read exactly one partition for topic $TOPIC within the timeout." >&2
   exit 1
 }
 read -r leader replicas isr <<< "$state"
@@ -130,8 +170,9 @@ ground_truth failure-start \
 failure_started=1
 
 echo "Killing active leader..."
-docker compose kill "$failed_service"
+# Set this first. Cleanup must restart the broker even if kill is interrupted.
 broker_stopped=1
+docker compose kill "$failed_service"
 
 echo "Waiting for a different partition leader..."
 deadline=$((SECONDS + TIMEOUT_SECONDS))
